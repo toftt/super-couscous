@@ -19,89 +19,21 @@ Output layer: size 10
 fn sigmoid(x: f64) -> f64 {
     1. / (1. + (-x).exp())
 }
-
-fn sigmoid_vec_mut(x: &mut Vec<f64>) {
-    for i in 0..x.len() {
-        x[i] = sigmoid(x[i]);
-    }
-}
-
-fn sigmoid_vec(x: &Vec<f64>) -> Vec<f64> {
-    x.iter().map(|y| sigmoid(*y)).collect()
-}
-
-fn add(a: &Vec<f64>, b: &Vec<f64>) -> Vec<f64> {
-    let mut result: Vec<f64> = Vec::with_capacity(a.len());
-    for (i, j) in a.iter().zip(b.iter()) {
-        result.push(i + j);
-    }
-    result
-}
-
-fn mult(a: &Vec<f64>, b: &Vec<f64>) -> Vec<f64> {
-    let mut result: Vec<f64> = Vec::with_capacity(a.len());
-    for (i, j) in a.iter().zip(b.iter()) {
-        result.push(i * j);
-    }
-    result
-}
-
-fn sub_vec(a: &Vec<f64>, b: &Vec<f64>) -> Vec<f64> {
-    let mut result: Vec<f64> = Vec::with_capacity(a.len());
-    for (i, j) in a.iter().zip(b.iter()) {
-        result.push(i - j);
-    }
-    result
-}
-
-fn sub_vec_f64(a: f64, b: &Vec<f64>) -> Vec<f64> {
-    b.iter().map(|c| c - a).collect()
-}
-
-fn dot<T>(a: &Vec<Vec<T>>, b: &Vec<T>) -> Vec<T>
-    where T: Mul<Output=T> + Add<Output=T> + Sum + Copy {
-    let mut result: Vec<T> = Vec::new();
-
-    for (w, v) in a.iter().zip(iter::repeat(b).take(a.len())) {
-        let partial: T = w.iter().zip(v.iter()).map(|(ww, vv)| ww.to_owned() * vv.to_owned()).sum();
-        result.push(partial);
-    }
-
-    result
-}
-
-fn random_vec(capacity: usize, rand: &mut ThreadRng) -> Vec<f64> {
-    let normal = Normal::new(0., 1.).unwrap();
-    let mut v = Vec::with_capacity(capacity);
-    for _ in 0..capacity {
-        v.push(normal.sample(rand));
-    }
-    v
-}
-
-fn sigmoid_prime_vec(z: &Vec<f64>) -> Vec<f64> {
-    let sv = sigmoid_vec(z);
-    mult(&sv, &sub_vec_f64(1., &sv))
+fn sigmoid_prime(z: &Matrix) -> Matrix {
+    let applied = z.apply(sigmoid);
+    &applied * &(1. - &applied)
 }
 
 #[derive(Debug)]
 struct Network {
     num_layers: usize,
     sizes: Vec<usize>,
-    biases: Vec<Vec<f64>>,
-    weights: Vec<Vec<Vec<f64>>>,
-}
-
-#[derive(Debug)]
-struct NetworkNew {
-    num_layers: usize,
-    sizes: Vec<usize>,
     biases: Vec<Matrix>,
     weights: Vec<Matrix>,
 }
 
-impl NetworkNew {
-    fn new(sizes: Vec<usize>) -> NetworkNew {
+impl Network {
+    fn new(sizes: Vec<usize>) -> Network {
         let biases: Vec<Matrix> = sizes.iter()
             .skip(1)
             .map(|x| Matrix::with_random_values(*x, 1))
@@ -109,49 +41,6 @@ impl NetworkNew {
 
         let weights: Vec<Matrix> = sizes.split_first().unwrap().1.iter().zip(sizes.split_last().unwrap().1.iter())
             .map(|(x, y)| Matrix::with_random_values(*x, *y)).collect();
-
-        NetworkNew {
-            num_layers: sizes.len(),
-            sizes,
-            biases,
-            weights,
-        }
-    }
-
-
-
-    fn feed_forward(&self, mut a: Matrix) -> Matrix {
-        for (b, w) in self.biases.iter().zip(self.weights.iter()) {
-            println!("----------------");
-            println!("{}", &w);
-            println!("{}", &a);
-            println!("{}", &b);
-            println!("----------------");
-            a = (b + &w.dot(&a)).apply(sigmoid);
-        }
-        a
-    }
-}
-
-impl Network {
-    fn new(sizes: Vec<usize>) -> Network {
-        let mut rand = thread_rng();
-
-        let biases: Vec<Vec<f64>> = sizes.iter()
-            .skip(1)
-            .map(|x| random_vec(*x, &mut rand))
-            .collect();
-
-        let weights: Vec<Vec<Vec<f64>>> = sizes.split_first().unwrap().1.iter().zip(sizes.split_last().unwrap().1.iter())
-            .map(|(x, y)| {
-                let mut v = Vec::with_capacity(*x);
-                for _ in 0..*x {
-                    v.push(random_vec(*y, &mut rand));
-                }
-                v
-            }).collect();
-
-        assert_eq!(biases.len(), weights.len());
 
         Network {
             num_layers: sizes.len(),
@@ -161,49 +50,74 @@ impl Network {
         }
     }
 
-    fn evaluate(self, mut a: Vec<f64>) -> Vec<f64> {
+
+    fn feed_forward(&self, mut a: Matrix) -> Matrix {
         for (b, w) in self.biases.iter().zip(self.weights.iter()) {
-            let mut intermediate = add(b, &dot(w, &a));
-            sigmoid_vec_mut(&mut intermediate);
-            a = intermediate;
+            a = (b + &w.dot(&a)).apply(sigmoid);
         }
         a
     }
 
-    fn update_mini_batch(self, mini_batch: (Vec<Vec<f64>>, Vec<f64>), eta: f64) {
-        let nabla_b: Vec<Vec<f64>> = vec![vec![0.; self.biases.get(0).unwrap().len()]; self.biases.len()];
-        let nabla_w: Vec<Vec<f64>> = vec![vec![0.; self.weights.get(0).unwrap().len()]; self.weights.len()];
+    fn update_mini_batch(&mut self, mini_batch: Vec<(Matrix, Matrix)>, eta: f64) {
+        let mut nabla_b: Vec<Matrix> = self.biases.iter().map(Matrix::with_shape).collect();
+        let mut nabla_w: Vec<Matrix> = self.weights.iter().map(Matrix::with_shape).collect();
+        let mini_batch_len = mini_batch.len();
+
+        for (x, y) in mini_batch.into_iter() {
+            let (delta_nabla_b, delta_nabla_w) = self.backprop(x, y);
+            nabla_b = nabla_b.iter().zip(delta_nabla_b.iter()).map(|(a, b)| a + b).collect();
+            nabla_w = nabla_w.iter().zip(delta_nabla_w.iter()).map(|(a, b)| a + b).collect();
+        }
+        self.weights = self.weights.iter().zip(nabla_w.iter()).map(|(w, nw)|
+            w - &((eta / mini_batch_len as f64) * nw)
+        ).collect();
+        self.biases = self.biases.iter().zip(nabla_b.iter()).map(|(b, nb)|
+            b - &((eta / mini_batch_len as f64) * nb)
+        ).collect();
     }
 
-    fn backprop(self, x: Vec<f64>, y: Vec<f64>) {
-        let mut nabla_b: Vec<Vec<f64>> = vec![vec![0.; self.biases.get(0).unwrap().len()]; self.biases.len()];
-        let mut nabla_w: Vec<Vec<f64>> = vec![vec![0.; self.weights.get(0).unwrap().len()]; self.weights.len()];
+    fn backprop(&self, x: Matrix, y: Matrix) -> (Vec<Matrix>, Vec<Matrix>) {
+        let mut nabla_b: Vec<Matrix> = self.biases.iter().map(Matrix::with_shape).collect();
+        let mut nabla_w: Vec<Matrix> = self.biases.iter().map(Matrix::with_shape).collect();
 
-        let activation = x;
-        let mut activations = vec![activation];
+        let mut activation = x;
+        let mut activations = vec![activation.clone()];
 
-        let mut zs: Vec<Vec<f64>> = vec![];
+        let mut zs: Vec<Matrix> = vec![];
 
         for (b, w) in self.biases.iter().zip(self.weights.iter()) {
-            let z = add(b, &dot(w, b));
-            let mut activation = z.clone();
+            let z = &w.dot(&activation) + b;
+            activation = z.apply(sigmoid);
 
             zs.push(z);
-            sigmoid_vec_mut(&mut activation);
-            activations.push(activation);
+            activations.push(activation.clone());
         }
 
-        let delta = mult(
-            &self.cost_derivative(activations.last().unwrap(), &y),
-            &sigmoid_vec(zs.iter().last().unwrap()),
-        );
+        let mut delta = Network::cost_derivative(activations.last().unwrap(), &y) *
+            sigmoid_prime(zs.last().unwrap());
 
-        let idx = nabla_b.len() - 1;
-        nabla_b[idx] = delta;
+        let idx_b = nabla_b.len() - 1;
+        nabla_b[idx_b] = delta.clone();
+
+        let a_minus_two = &activations[activations.len() - 2];
+        let idx_w = nabla_w.len() - 1;
+        nabla_w[idx_w] = delta.dot(&a_minus_two.transpose());
+
+        for l in 2..self.num_layers {
+            let z = &zs[zs.len() - l];
+            let sp = sigmoid_prime(z);
+            delta = self.weights[self.weights.len() - l + 1].transpose().dot(&delta) * sp;
+
+            let idx_b = nabla_b.len() - l;
+            let idx_w = nabla_w.len() - l;
+            nabla_b[idx_b] = delta.clone();
+            nabla_w[idx_w] = delta.dot(&activations[activations.len() - l - 1].transpose());
+        }
+        (nabla_b, nabla_w)
     }
 
-    fn cost_derivative(self, output_activation: &Vec<f64>, y: &Vec<f64>) -> Vec<f64> {
-        sub_vec(output_activation, y)
+    fn cost_derivative(output_activation: &Matrix, y: &Matrix) -> Matrix {
+        output_activation - y
     }
 }
 
@@ -214,23 +128,48 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use neural_network::Matrix;
-    use crate::{dot, Network, NetworkNew};
-
-    #[test]
-    fn dot_works() {
-        let a = vec![vec![1, 2, 3], vec![4, 5, 6]];
-        let b = vec![7, 8, 9];
-        assert_eq!(dot(&a, &b), vec![50, 122]);
-    }
+    use crate::{Network};
 
     #[test]
     fn network_eval() {
-        let b = NetworkNew::new(vec![2, 4, 3]);
+        let b = Network::new(vec![2, 4, 3]);
         dbg!(&b);
         let result2 = b.feed_forward(Matrix::from_vec(vec![
             vec![0.5],
             vec![0.1],
         ]));
         println!("{}", &result2);
+    }
+
+    #[test]
+    fn mini_batch() {
+        let mut network = Network::new(vec![2, 4, 3]);
+        let training_data = vec![
+            (
+                Matrix::from_vec(vec![
+                    vec![0.5],
+                    vec![0.1],
+                ]),
+                Matrix::from_vec(vec![
+                    vec![0.5],
+                    vec![0.1],
+                    vec![0.1],
+                ]),
+            ),
+            (
+                Matrix::from_vec(vec![
+                    vec![0.3],
+                    vec![0.4],
+                ]),
+                Matrix::from_vec(vec![
+                    vec![0.7],
+                    vec![0.7],
+                    vec![0.7],
+                ]),
+            ),
+        ];
+        dbg!(&network);
+        network.update_mini_batch(training_data, 3.);
+        dbg!(&network);
     }
 }

@@ -4,7 +4,7 @@ use rand::distributions::Distribution;
 use rand::thread_rng;
 use rand_distr::Normal;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Matrix {
     pub num_rows: usize,
     pub num_cols: usize,
@@ -87,6 +87,21 @@ impl Matrix {
         }
     }
 
+    pub fn transpose(&self) -> Self {
+        let mut new_storage = Vec::with_capacity(self.num_rows * self.num_cols);
+
+        for i in 0..self.num_cols {
+            for j in 0..self.num_rows {
+                new_storage.push(self.get(j, i));
+            }
+        }
+        Matrix {
+            num_rows: self.num_cols,
+            num_cols: self.num_rows,
+            storage: new_storage.into_boxed_slice(),
+        }
+    }
+
     fn do_op(&self, other: &Self, op: fn(f64, f64) -> f64) -> Self {
         assert_eq!(self.num_rows, other.num_rows, "Matrices need to have same amount of rows.");
         assert_eq!(self.num_cols, other.num_cols, "Matrices need to have same amount of columns.");
@@ -147,11 +162,27 @@ impl Sub for Matrix {
     }
 }
 
+impl Sub<&Matrix> for &Matrix {
+    type Output = Matrix;
+
+    fn sub(self, other: &Matrix) -> Matrix {
+        self.do_op(&other, |a, b| a - b)
+    }
+}
+
 impl Sub<f64> for Matrix {
     type Output = Self;
 
     fn sub(self, other: f64) -> Self {
         self.do_op_const(other, |a, b| a - b)
+    }
+}
+
+impl Sub<&Matrix> for f64 {
+    type Output = Matrix;
+
+    fn sub(self, other: &Matrix) -> Matrix {
+        other.do_op_const(self, |from_m, val| val - from_m)
     }
 }
 
@@ -163,11 +194,27 @@ impl Mul for Matrix {
     }
 }
 
+impl Mul<&Matrix> for &Matrix {
+    type Output = Matrix;
+
+    fn mul(self, other: &Matrix) -> Matrix {
+        self.do_op(&other, |a, b| a * b)
+    }
+}
+
 impl Mul<f64> for Matrix {
     type Output = Self;
 
     fn mul(self, other: f64) -> Self {
         self.do_op_const(other, |a, b| a * b)
+    }
+}
+
+impl Mul<&Matrix> for f64 {
+    type Output = Matrix;
+
+    fn mul(self, other: &Matrix) -> Matrix {
+        other.do_op_const(self, |a, b| a * b)
     }
 }
 
@@ -286,5 +333,31 @@ mod tests {
 
         let result = a.dot(&b);
         assert_eq!(expected, result);
+    }
+    #[test]
+    fn transpose() {
+        let a = Matrix::from_vec(vec![
+            vec![1., 2.],
+            vec![3., 4.],
+            vec![5., 6.],
+        ]);
+        let expected = Matrix::from_vec(vec![
+            vec![1., 3., 5.],
+            vec![2., 4., 6.],
+        ]);
+
+        assert_eq!(expected, a.transpose());
+    }
+
+    #[test]
+    fn transpose_smallest() {
+        let a = Matrix::from_vec(vec![
+            vec![1.],
+        ]);
+        let expected = Matrix::from_vec(vec![
+            vec![1.],
+        ]);
+
+        assert_eq!(expected, a.transpose());
     }
 }
