@@ -50,6 +50,15 @@ impl Matrix {
         }
     }
 
+    pub fn max(&self) -> usize {
+        self.storage
+            .iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| a.total_cmp(b))
+            .map(|(index, _)| index)
+            .expect("Encountered a NaN.")
+    }
+
     pub fn apply(&self, fun: fn(f64) -> f64) -> Self {
         let mut new_storage = Vec::with_capacity(self.num_rows * self.num_cols);
         for a in self.storage.iter() {
@@ -334,6 +343,7 @@ mod tests {
         let result = a.dot(&b);
         assert_eq!(expected, result);
     }
+
     #[test]
     fn transpose() {
         let a = Matrix::from_vec(vec![
@@ -359,5 +369,25 @@ mod tests {
         ]);
 
         assert_eq!(expected, a.transpose());
+    }
+
+    #[test]
+    fn max() {
+        let a = Matrix::from_vec(vec![
+            vec![1.],
+            vec![3.],
+            vec![2.],
+        ]);
+        assert_eq!(1, a.max());
+    }
+
+    #[test]
+    fn max_2() {
+        let a = Matrix::from_vec(vec![
+            vec![1.],
+            vec![3.],
+            vec![2.],
+        ]);
+        assert_eq!(1, a.max());
     }
 }

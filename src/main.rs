@@ -1,7 +1,9 @@
-use std::iter;
+use std::{io, iter};
+use std::fs::File;
+use std::io::BufRead;
 use std::iter::Sum;
 use std::ops::{Add, Mul};
-use std::path::Iter;
+use std::path::{Iter, Path};
 use std::process::Output;
 use rand::prelude::*;
 use rand_distr::Normal;
@@ -19,6 +21,7 @@ Output layer: size 10
 fn sigmoid(x: f64) -> f64 {
     1. / (1. + (-x).exp())
 }
+
 fn sigmoid_prime(z: &Matrix) -> Matrix {
     let applied = z.apply(sigmoid);
     &applied * &(1. - &applied)
@@ -50,15 +53,42 @@ impl Network {
         }
     }
 
+    fn train(&mut self,
+             mut training_data: Vec<(Matrix, Matrix)>,
+             epochs: usize,
+             mini_batch_size: usize,
+             eta: f64,
+             test_data: Vec<(Matrix, Matrix)>) {
+        let n = training_data.len();
+        let n_test = test_data.len();
 
-    fn feed_forward(&self, mut a: Matrix) -> Matrix {
-        for (b, w) in self.biases.iter().zip(self.weights.iter()) {
-            a = (b + &w.dot(&a)).apply(sigmoid);
+        for i in 00..epochs {
+            training_data.shuffle(&mut thread_rng());
+            let mini_batches: Vec<&[(Matrix, Matrix)]> = (0..n).step_by(mini_batch_size)
+                .map(|idx| &training_data[idx..idx + mini_batch_size])
+                .collect();
+
+            for (idx, mini_batch) in mini_batches.iter().enumerate() {
+                if idx % 500 == 0 {
+                    println!("Starting mini_batch {}", idx);
+                }
+                self.update_mini_batch(mini_batch, eta);
+            }
+
+            print!("Epoch {}: {} / {}", i, self.evaluate(&test_data), n_test);
         }
-        a
     }
 
-    fn update_mini_batch(&mut self, mini_batch: Vec<(Matrix, Matrix)>, eta: f64) {
+
+    fn feed_forward(&self, a: &Matrix) -> Matrix {
+        let mut activation = a.clone();
+        for (b, w) in self.biases.iter().zip(self.weights.iter()) {
+            activation = (b + &w.dot(&activation)).apply(sigmoid);
+        }
+        activation
+    }
+
+    fn update_mini_batch(&mut self, mini_batch: &[(Matrix, Matrix)], eta: f64) {
         let mut nabla_b: Vec<Matrix> = self.biases.iter().map(Matrix::with_shape).collect();
         let mut nabla_w: Vec<Matrix> = self.weights.iter().map(Matrix::with_shape).collect();
         let mini_batch_len = mini_batch.len();
@@ -76,11 +106,11 @@ impl Network {
         ).collect();
     }
 
-    fn backprop(&self, x: Matrix, y: Matrix) -> (Vec<Matrix>, Vec<Matrix>) {
+    fn backprop(&self, x: &Matrix, y: &Matrix) -> (Vec<Matrix>, Vec<Matrix>) {
         let mut nabla_b: Vec<Matrix> = self.biases.iter().map(Matrix::with_shape).collect();
         let mut nabla_w: Vec<Matrix> = self.biases.iter().map(Matrix::with_shape).collect();
 
-        let mut activation = x;
+        let mut activation = x.clone();
         let mut activations = vec![activation.clone()];
 
         let mut zs: Vec<Matrix> = vec![];
@@ -119,10 +149,66 @@ impl Network {
     fn cost_derivative(output_activation: &Matrix, y: &Matrix) -> Matrix {
         output_activation - y
     }
+
+    fn evaluate(&self, test_data: &[(Matrix, Matrix)]) -> usize {
+        test_data.iter()
+            .map(|(x, y)| {
+                (self.feed_forward(x).max(), y.max())
+            })
+            .filter(|(a, b)| a == b)
+            .count()
+    }
 }
 
 fn main() {
-    println!("Hello, world!");
+    println!("Loading test data...");
+    let mut test_data: Vec<(Matrix, Matrix)> = Vec::new();
+    for line in read_lines("./data/mnist_test.csv").expect("error reading file") {
+        let line_str = line.expect("error reading line");
+        test_data.push(get_training_tuple(&line_str));
+    }
+
+    println!("Loading training data...");
+    let mut training_data: Vec<(Matrix, Matrix)> = Vec::new();
+    for line in read_lines("./data/mnist_train.csv").expect("error reading file") {
+        let line_str = line.expect("error reading line");
+        training_data.push(get_training_tuple(&line_str));
+    }
+
+    let mut network = Network::new(vec![784, 30, 10]);
+    let _ = &network.train(training_data, 30, 10, 3., test_data);
+}
+
+fn read_lines<P>(file_name: P) -> io::Result<io::Lines<io::BufReader<File>>>
+    where P: AsRef<Path> {
+    let file = File::open(file_name)?;
+    Ok(io::BufReader::new(file).lines())
+}
+
+fn get_training_tuple(line: &str) -> (Matrix, Matrix) {
+    let expected_num: f64 = line.split(",").into_iter().next().unwrap().parse().unwrap();
+    let expected_vec: Vec<Vec<f64>> = (0..10).into_iter()
+        .map(|idx| idx as f64)
+        .map(|idx| if idx == expected_num { vec![1.] } else { vec![0.] })
+        .collect();
+    let expected = Matrix::from_vec(expected_vec);
+    let input_vec: Vec<f64> = line.split(",")
+        .skip(1)
+        .map(|n| n.parse::<f64>().unwrap())
+        .map(|n| map(n, 0., 255., 0., 1.))
+        .collect();
+
+    let input = Matrix {
+        num_rows: 784,
+        num_cols: 1,
+        storage: input_vec.into_boxed_slice(),
+    };
+
+    return (input, expected);
+}
+
+fn map(value: f64, low1: f64, high1: f64, low2: f64, high2: f64) -> f64 {
+    low2 + (value - low1) * ((high2 - low2) / (high1 - low1))
 }
 
 #[cfg(test)]
@@ -133,11 +219,13 @@ mod tests {
     #[test]
     fn network_eval() {
         let b = Network::new(vec![2, 4, 3]);
-        dbg!(&b);
-        let result2 = b.feed_forward(Matrix::from_vec(vec![
+        let input = Matrix::from_vec(vec![
             vec![0.5],
             vec![0.1],
-        ]));
+        ]);
+        dbg!(&b);
+        dbg!(&input);
+        let result2 = b.feed_forward(&input);
         println!("{}", &result2);
     }
 
@@ -169,7 +257,7 @@ mod tests {
             ),
         ];
         dbg!(&network);
-        network.update_mini_batch(training_data, 3.);
+        network.update_mini_batch(&training_data, 3.);
         dbg!(&network);
     }
 }
