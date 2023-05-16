@@ -176,7 +176,7 @@ fn main() {
     }
 
     let mut network = Network::new(vec![784, 30, 10]);
-    let _ = &network.train(training_data, 30, 10, 3., test_data);
+    let _ = &network.train(training_data, 60, 10, 0.1, test_data);
 }
 
 fn read_lines<P>(file_name: P) -> io::Result<io::Lines<io::BufReader<File>>>
